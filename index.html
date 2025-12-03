@@ -256,9 +256,9 @@ class Vector2 {
 const CONFIG = {
     SEGMENT_HEIGHT: 15,    // Height of each tunnel slice
     VIEW_DISTANCE: 80,     // How many segments visible
-    BASE_SPEED: 6,         // Start speed
+    BASE_SPEED: 6,         // Start speed (per frame at 60fps)
     MAX_SPEED: 12,         // Terminal velocity cap
-    SPEED_INC: 0.0003,     // Gradual acceleration (approx 2 mins to max speed)
+    SPEED_INC: 0.0003,     // Gradual acceleration
     PLAYER_SIZE: 6,        // Radius
     FRICTION: 0.92,        // Air resistance for lateral movement
     ACCEL: 1.2,            // Lateral thruster power
@@ -477,9 +477,9 @@ class Particle {
         this.size = Math.random() * 2;
     }
 
-    update() {
-        this.y += this.vy;
-        this.life -= this.decay;
+    update(timeScale) {
+        this.y += this.vy * timeScale;
+        this.life -= this.decay * timeScale;
     }
 
     draw(ctx) {
@@ -583,10 +583,11 @@ class TunnelSystem {
         this.segments.push(segment);
     }
 
-    update(speed, difficultyMultiplier) {
+    // UPDATED: Now accepts total movement amount (speed * timeScale) instead of raw speed
+    update(moveAmount) {
         // Move all segments UP
         this.segments.forEach(seg => {
-            seg.y -= speed;
+            seg.y -= moveAmount;
         });
 
         // Remove segments that went off top
@@ -833,32 +834,44 @@ class Game {
         document.getElementById('gameOverScreen').style.display = 'none';
     }
 
+    // UPDATED: Now receives delta time (dt) for framerate independence
     update(dt) {
         if (this.state !== 'PLAYING') return;
 
-        // Gradual speed increase with Cap
+        // --- Delta Time Normalization ---
+        // Target 60 FPS (16.67ms per frame). 
+        // If dt is 16.67, timeScale is 1.0. If dt is 8.33 (120hz), timeScale is 0.5.
+        // We cap dt at 100ms to prevent explosion on tab switching.
+        const safeDt = Math.min(dt, 100);
+        const timeScale = safeDt / (1000 / 60);
+
+        // Gradual speed increase with Cap (scaled by time)
         if (this.speed < CONFIG.MAX_SPEED) {
-            this.speed += CONFIG.SPEED_INC;
+            this.speed += CONFIG.SPEED_INC * timeScale;
         }
 
         // Update Audio Wind Effect
-        // Normalize speed between 0 and 1 relative to start/max
         const speedRatio = (this.speed - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED);
         this.sound.updateWind(Math.max(0, Math.min(1, speedRatio)));
 
-        // Score increases by distance traveled
-        this.score += (this.speed * 0.1);
+        // Score increases by distance traveled (scaled)
+        this.score += (this.speed * 0.1) * timeScale;
         this.scoreDisplay.textContent = Math.floor(this.score);
 
-        // Player Physics
-        if (this.input.left) this.player.vel.x -= CONFIG.ACCEL;
-        if (this.input.right) this.player.vel.x += CONFIG.ACCEL;
+        // Player Physics (Scaled)
+        // Acceleration scaling
+        if (this.input.left) this.player.vel.x -= CONFIG.ACCEL * timeScale;
+        if (this.input.right) this.player.vel.x += CONFIG.ACCEL * timeScale;
 
-        this.player.vel.x *= CONFIG.FRICTION;
-        this.player.pos.x += this.player.vel.x;
+        // Friction scaling: exponential decay requires power function
+        // v_new = v_old * FRICTION^timeScale
+        this.player.vel.x *= Math.pow(CONFIG.FRICTION, timeScale);
+        
+        // Position integration
+        this.player.pos.x += this.player.vel.x * timeScale;
 
         // Trail Logic
-        if (Math.random() > 0.5) {
+        if (Math.random() < 0.5 * timeScale) { // adjust probability by timeScale
             this.player.trail.push({
                 x: this.player.pos.x, 
                 y: this.player.pos.y, 
@@ -870,14 +883,14 @@ class Game {
         // Update Trail
         for (let i = this.player.trail.length - 1; i >= 0; i--) {
             const t = this.player.trail[i];
-            t.y -= this.speed; // Trail moves up with world
-            t.alpha -= 0.05;
-            t.width *= 0.9;
+            t.y -= this.speed * timeScale; // Trail moves up with world (scaled)
+            t.alpha -= 0.05 * timeScale;
+            t.width *= Math.pow(0.9, timeScale); // Decay width
             if (t.alpha <= 0) this.player.trail.splice(i, 1);
         }
 
         // Speed lines/Particles
-        if (Math.random() < 0.3) {
+        if (Math.random() < 0.3 * timeScale) {
             this.particles.push(new Particle(
                 Math.random() * this.width,
                 this.height + 10,
@@ -888,12 +901,12 @@ class Game {
         
         // Update particles
         for (let i = this.particles.length - 1; i >= 0; i--) {
-            this.particles[i].update();
+            this.particles[i].update(timeScale);
             if (this.particles[i].life <= 0) this.particles.splice(i, 1);
         }
 
-        // Update Tunnel
-        this.tunnel.update(this.speed, this.score);
+        // Update Tunnel (Pass movement amount, not raw speed)
+        this.tunnel.update(this.speed * timeScale);
         this.tunnel.checkLandmarks(this.player.pos.y, this.sound);
 
         // Collision Detection
