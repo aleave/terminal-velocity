@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- Updated viewport with viewport-fit=cover for full screen iOS -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Terminal Velocity</title>
+    
+    <!-- PWA / iOS Configuration -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <!-- "black-translucent" lets the game render BEHIND the status bar text -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Terminal">
+    <link rel="apple-touch-icon" href="icon.png">
+    <link rel="manifest" href="manifest.json">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;600&display=swap');
+
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #050505; /* Deep obsidian */
+            font-family: 'Inter', sans-serif;
+            color: #e5e5e5;
+            
+            /* Mobile interaction locks */
+            touch-action: none; 
+            overscroll-behavior: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #gameCanvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            /* Ensures canvas covers the screen including safe areas */
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        .ui-layer {
+            position: absolute;
+            pointer-events: none;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            z-index: 20; /* Above canvas and effects */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            transition: opacity 0.3s ease;
+        }
+
+        .hud {
+            position: absolute;
+            /* ADAPTIVE NOTCH SPACING: Adds 2rem to whatever the device notch size is */
+            top: calc(2rem + env(safe-area-inset-top)); 
+            left: calc(2rem + env(safe-area-inset-left));
+            
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-size: 0.85rem;
+            color: #888;
+            z-index: 30;
+        }
+
+        .hud span {
+            color: #fff;
+            font-weight: 600;
+        }
+
+        .modal {
+            background: rgba(10, 10, 10, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px); /* Safari support */
+            padding: 2.5rem 4rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);
+            pointer-events: auto;
+            
+            /* Ensure modal respects max width on mobile */
+            max-width: 90%;
+            box-sizing: border-box;
+        }
+
+        .modal.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        h1 {
+            font-weight: 300;
+            font-size: 2.5rem;
+            letter-spacing: -0.05em;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(to right, #fff, #999);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        p.sub {
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 2rem;
+            font-weight: 300;
+        }
+
+        /* Instructions Grid */
+        .controls-guide {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin-bottom: 2.5rem;
+            font-size: 0.8rem;
+            color: #888;
+        }
+        .key-icon {
+            border: 1px solid #444;
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            color: #ccc;
+            margin-right: 0.5rem;
+            font-family: monospace;
+        }
+
+        /* Pulsing Start Prompt */
+        .start-prompt {
+            font-size: 0.9rem;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            color: #fff;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.4; }
+            50% { opacity: 1; }
+            100% { opacity: 0.4; }
+        }
+
+        button.btn-primary {
+            background: #fff;
+            color: #000;
+            border: none;
+            padding: 0.8rem 2rem;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease, opacity 0.2s ease;
+            /* Better touch target size */
+            min-height: 44px;
+        }
+
+        button.btn-primary:hover {
+            opacity: 0.9;
+            transform: scale(1.02);
+        }
+
+        /* Scanline effect */
+        .scanlines {
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.1) 50%,
+                rgba(0,0,0,0.1)
+            );
+            background-size: 100% 4px;
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none;
+            z-index: 10;
+        }
+        
+        /* Vignette */
+        .vignette {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle, transparent 40%, #000 120%);
+            pointer-events: none;
+            z-index: 9;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+    
+    <div class="vignette"></div>
+    <div class="scanlines"></div>
+
+    <div class="hud">
+        Depth: <span id="scoreDisplay">0</span>m
+    </div>
+
+    <!-- Start Screen -->
+    <div id="startScreen" class="ui-layer">
+        <div class="modal active">
+            <h1>TERMINAL VELOCITY</h1>
+            <p class="sub">Inertial Descent Simulation</p>
+            
+            <div class="controls-guide">
+                <div>
+                    <span class="key-icon">←</span> LEFT
+                </div>
+                <div>
+                    <span class="key-icon">→</span> RIGHT
+                </div>
+            </div>
+
+            <div class="start-prompt">
+                PRESS SPACEBAR TO START
+            </div>
+            <p class="text-[10px] text-gray-600 mt-2">(Tap screen on mobile)</p>
+        </div>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="gameOverScreen" class="ui-layer" style="display: none;">
+        <div class="modal active">
+            <h1 style="color: #ff4444; -webkit-text-fill-color: #ff4444;">IMPACT DETECTED</h1>
+            <p class="sub">Depth Reached: <span id="finalScore" class="text-white font-bold">0</span>m</p>
+            <button class="btn-primary" onclick="game.reset()">RETRY</button>
+            <p class="text-xs text-gray-500 mt-4">or press Spacebar</p>
+        </div>
+    </div>
+
+<script>
+/**
+ * Vector2 Utility for physics calculations
+ */
+class Vector2 {
+    constructor(x, y) { this.x = x; this.y = y; }
+    add(v) { this.x += v.x; this.y += v.y; return this; }
+    mult(s) { this.x *= s; this.y *= s; return this; }
+    clone() { return new Vector2(this.x, this.y); }
+}
+
+/**
+ * Game Configuration
+ */
+const CONFIG = {
+    SEGMENT_HEIGHT: 15,    // Height of each tunnel slice
+    VIEW_DISTANCE: 80,     // How many segments visible
+    BASE_SPEED: 6,         // Start speed
+    MAX_SPEED: 12,         // Terminal velocity cap
+    SPEED_INC: 0.0003,     // Gradual acceleration (approx 2 mins to max speed)
+    PLAYER_SIZE: 6,        // Radius
+    FRICTION: 0.92,        // Air resistance for lateral movement
+    ACCEL: 1.2,            // Lateral thruster power
+    WALL_COLOR: '#1a1a1a', // Dark grey walls
+    PATH_COLOR: '#0a0a0a', // Darker void
+    ACCENT_COLOR: '#ffffff'// Player glow
+};
+
+/**
+ * Procedural Audio Engine
+ * Generates dark synthwave and physics-based wind effects in real-time.
+ */
+class SoundManager {
+    constructor() {
+        this.ctx = null;
+        this.masterGain = null;
+        this.oscillators = [];
+        this.windNode = null;
+        this.windGain = null;
+        this.nextNoteTime = 0;
+        this.sequenceIndex = 0;
+        this.isPlaying = false;
+        
+        // A Minor Arpeggio sequence (frequencies)
+        this.sequence = [110.00, 130.81, 164.81, 196.00, 164.81, 130.81]; // A2, C3, E3, G3...
+        this.tempo = 0.15; // Seconds per note
+    }
+
+    init() {
+        if (this.ctx) return;
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AudioContext();
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.value = 0.4; // Master volume
+        this.masterGain.connect(this.ctx.destination);
+    }
+
+    createNoiseBuffer() {
+        const bufferSize = this.ctx.sampleRate * 2; // 2 seconds
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+        return buffer;
+    }
+
+    startWind() {
+        if (!this.ctx) return;
+        // Pink noise approximation for wind
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = this.createNoiseBuffer();
+        noise.loop = true;
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 200;
+
+        this.windGain = this.ctx.createGain();
+        this.windGain.gain.value = 0;
+
+        noise.connect(filter);
+        filter.connect(this.windGain);
+        this.windGain.connect(this.masterGain);
+        
+        noise.start();
+        this.windNode = { source: noise, filter: filter };
+    }
+
+    updateWind(speedRatio) {
+        // speedRatio is 0.0 to 1.0 (based on max speed)
+        if (!this.windNode) return;
+        
+        // Wind pitch (cutoff) increases with speed
+        const targetFreq = 200 + (speedRatio * 800); 
+        this.windNode.filter.frequency.setTargetAtTime(targetFreq, this.ctx.currentTime, 0.1);
+        
+        // Wind volume increases with speed
+        const targetVol = 0.1 + (speedRatio * 0.4);
+        this.windGain.gain.setTargetAtTime(targetVol, this.ctx.currentTime, 0.1);
+    }
+
+    startMusic() {
+        if (!this.ctx) this.init();
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+        
+        this.stopMusic(); // Clear existing
+        this.isPlaying = true;
+        this.startWind();
+
+        const t = this.ctx.currentTime;
+
+        // 1. The Drone (Deep Sawtooth Pad)
+        const droneOsc1 = this.ctx.createOscillator();
+        const droneOsc2 = this.ctx.createOscillator();
+        const droneFilter = this.ctx.createBiquadFilter();
+        const droneGain = this.ctx.createGain();
+
+        droneOsc1.type = 'sawtooth';
+        droneOsc1.frequency.value = 55.00; // A1
+        droneOsc2.type = 'sawtooth';
+        droneOsc2.frequency.value = 55.50; // Detuned slightly
+        
+        droneFilter.type = 'lowpass';
+        droneFilter.frequency.value = 600;
+        droneFilter.Q.value = 1;
+
+        droneGain.gain.value = 0.3;
+
+        droneOsc1.connect(droneFilter);
+        droneOsc2.connect(droneFilter);
+        droneFilter.connect(droneGain);
+        droneGain.connect(this.masterGain);
+
+        droneOsc1.start(t);
+        droneOsc2.start(t);
+        
+        this.oscillators.push(droneOsc1, droneOsc2);
+
+        // Start Sequencer
+        this.nextNoteTime = t;
+        this.scheduler();
+    }
+
+    scheduler() {
+        if (!this.isPlaying) return;
+        while (this.nextNoteTime < this.ctx.currentTime + 0.1) {
+            this.playNote(this.nextNoteTime);
+            this.nextNoteTime += this.tempo;
+        }
+        requestAnimationFrame(this.scheduler.bind(this));
+    }
+
+    playNote(time) {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        
+        osc.type = 'square';
+        osc.frequency.value = this.sequence[this.sequenceIndex];
+        
+        // Envelope
+        gain.gain.setValueAtTime(0.1, time);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
+
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+
+        osc.start(time);
+        osc.stop(time + 0.15);
+
+        this.sequenceIndex = (this.sequenceIndex + 1) % this.sequence.length;
+    }
+
+    stopMusic() {
+        this.isPlaying = false;
+        this.oscillators.forEach(osc => {
+            try { osc.stop(); } catch(e){}
+        });
+        this.oscillators = [];
+        if (this.windNode) {
+            try { this.windNode.source.stop(); } catch(e){}
+            this.windNode = null;
+        }
+    }
+
+    playCrash() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
+        
+        gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.5);
+        
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.6);
+    }
+    
+    // Landmark sound: Soft high-pitched "plop"
+    playPlop() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        
+        osc.type = 'sine';
+        // Pitch envelope: High to slightly lower
+        osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(400, this.ctx.currentTime + 0.1);
+        
+        // Volume envelope: Short blip
+        gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.15);
+        
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.15);
+    }
+}
+
+class Particle {
+    constructor(x, y, speed, color) {
+        this.x = x;
+        this.y = y;
+        this.vy = -speed * (0.5 + Math.random()); // Move up (simulating falling down)
+        this.life = 1.0;
+        this.decay = 0.02 + Math.random() * 0.03;
+        this.color = color;
+        this.size = Math.random() * 2;
+    }
+
+    update() {
+        this.y += this.vy;
+        this.life -= this.decay;
+    }
+
+    draw(ctx) {
+        ctx.globalAlpha = this.life;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+    }
+}
+
+class TunnelSystem {
+    constructor(width, height) {
+        this.width = width;
+        this.height = height;
+        this.segments = [];
+        this.pathCenter = width / 2;
+        this.pathWidth = 450; 
+        this.targetCenter = width / 2;
+        this.noiseOffset = Math.random() * 1000; // Randomize start to prevent predictable rightward bias
+        this.segmentCount = 0;
+        this.lastObstacleDist = 0;
+        this.nextLandmark = 500; // First landmark at 500m
+        this.accumulatedDepth = 0;
+        
+        // Initialize segments to fill screen
+        for (let i = 0; i < CONFIG.VIEW_DISTANCE; i++) {
+            this.addSegment(i * CONFIG.SEGMENT_HEIGHT);
+        }
+    }
+
+    addSegment(yPosition) {
+        this.segmentCount++;
+        this.lastObstacleDist++;
+        this.accumulatedDepth += (CONFIG.SEGMENT_HEIGHT * 0.1); // Rough estimate for landmarks
+        
+        // Calculate Difficulty Factor (0.0 to 1.0)
+        // Reaches max difficulty at 3000 segments (approx 2 mins of survival)
+        const difficulty = Math.min(1, this.segmentCount / 3000);
+
+        // Dynamic Path Width: Narrows from 450 to 200
+        this.pathWidth = 450 - (difficulty * 250);
+
+        // Simple noise logic for winding path
+        this.noiseOffset += 0.05;
+        
+        // Drifting center
+        if (Math.random() < 0.05) {
+            this.targetCenter = (this.width * 0.2) + Math.random() * (this.width * 0.6);
+        }
+        
+        // Smoothly move center towards target
+        this.pathCenter += (this.targetCenter - this.pathCenter) * 0.05;
+        
+        // Add minimal sine wave for organic feel
+        const organicDrift = Math.sin(this.noiseOffset) * 20;
+        
+        // Landmark Logic (Approx every 500 depth units)
+        // We use segmentCount to keep it consistent
+        // Let's say 1 segment ~= 1 meter unit roughly in gameplay perception
+        // Or strictly use segment count. Every ~350 segments is roughly 500m on the scorecard
+        let isLandmark = false;
+        let landmarkLabel = "";
+        
+        // Every 350 segments, insert a landmark (tuning to match score speed roughly)
+        if (this.segmentCount % 350 === 0) {
+            isLandmark = true;
+            landmarkLabel = (this.segmentCount / 350 * 500) + "m";
+        }
+        
+        // Dynamic Obstacles Logic
+        let hasObstacle = false;
+        let obstacleType = 0; // 0: None, 1: Center Block, 2: Split
+        
+        // Dynamic Safety Gap: Reduces from 25 to 10
+        const minGap = 25 - (difficulty * 15);
+        
+        // Dynamic Spawn Chance: Increases from 5% to 18%
+        const spawnChance = 0.05 + (difficulty * 0.13);
+
+        if (this.segmentCount > 100 && this.lastObstacleDist > minGap && !isLandmark) {
+            if (Math.random() < spawnChance) {
+                hasObstacle = true;
+                obstacleType = Math.random() > 0.5 ? 1 : 2;
+                this.lastObstacleDist = 0; 
+            }
+        }
+
+        const segment = {
+            y: yPosition, 
+            center: this.pathCenter + organicDrift,
+            width: this.pathWidth,
+            obstacle: hasObstacle ? obstacleType : 0,
+            colorOffset: Math.random() * 20,
+            landmark: isLandmark,
+            landmarkLabel: landmarkLabel,
+            landmarkPlayed: false
+        };
+
+        this.segments.push(segment);
+    }
+
+    update(speed, difficultyMultiplier) {
+        // Move all segments UP
+        this.segments.forEach(seg => {
+            seg.y -= speed;
+        });
+
+        // Remove segments that went off top
+        if (this.segments[0].y < -CONFIG.SEGMENT_HEIGHT) {
+            this.segments.shift();
+        }
+
+        // Add new segments at bottom
+        const lastSeg = this.segments[this.segments.length - 1];
+        if (lastSeg.y < this.height + 100) { // Buffer
+            this.addSegment(lastSeg.y + CONFIG.SEGMENT_HEIGHT);
+        }
+    }
+
+    checkLandmarks(playerY, soundManager) {
+        // Check if any landmark segment has just passed the player
+        this.segments.forEach(seg => {
+            if (seg.landmark && !seg.landmarkPlayed) {
+                // If segment is within a small range of playerY (crossing it)
+                if (Math.abs(seg.y - playerY) < CONFIG.SEGMENT_HEIGHT) {
+                    soundManager.playPlop();
+                    seg.landmarkPlayed = true;
+                }
+            }
+        });
+    }
+
+    draw(ctx) {
+        ctx.lineWidth = 1;
+        
+        // Draw the walls (The inverse of the path)
+        for (let i = 0; i < this.segments.length - 1; i++) {
+            const curr = this.segments[i];
+            const next = this.segments[i+1];
+
+            // Calculate wall boundaries
+            const cLeft = curr.center - curr.width/2;
+            const cRight = curr.center + curr.width/2;
+            const nLeft = next.center - next.width/2;
+            const nRight = next.center + next.width/2;
+
+            // Gradient for depth perception
+            const gradient = ctx.createLinearGradient(0, curr.y, 0, next.y);
+            const darkness = Math.min(1, i / (CONFIG.VIEW_DISTANCE * 0.8)); // Fade out at bottom
+            const colorVal = Math.floor(20 + curr.colorOffset);
+            const col = `rgb(${colorVal}, ${colorVal}, ${colorVal + 10})`;
+            
+            ctx.fillStyle = col;
+            
+            // Left Wall
+            ctx.beginPath();
+            ctx.moveTo(0, curr.y);
+            ctx.lineTo(cLeft, curr.y);
+            ctx.lineTo(nLeft, next.y);
+            ctx.lineTo(0, next.y);
+            ctx.fill();
+
+            // Right Wall
+            ctx.beginPath();
+            ctx.moveTo(this.width, curr.y);
+            ctx.lineTo(cRight, curr.y);
+            ctx.lineTo(nRight, next.y);
+            ctx.lineTo(this.width, next.y);
+            ctx.fill();
+
+            // Draw Obstacles
+            if (curr.obstacle > 0) {
+                ctx.fillStyle = '#ff3333'; // Hazard color
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#ff0000';
+                
+                if (curr.obstacle === 1) {
+                    // Center Block
+                    const obsW = curr.width * 0.4;
+                    ctx.fillRect(curr.center - obsW/2, curr.y, obsW, CONFIG.SEGMENT_HEIGHT);
+                } else if (curr.obstacle === 2) {
+                    // Split (Side blocks)
+                    const obsW = curr.width * 0.25;
+                    ctx.fillRect(cLeft, curr.y, obsW, CONFIG.SEGMENT_HEIGHT);
+                    ctx.fillRect(cRight - obsW, curr.y, obsW, CONFIG.SEGMENT_HEIGHT);
+                }
+                ctx.shadowBlur = 0;
+            }
+            
+            // Draw Landmark Line
+            if (curr.landmark) {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.setLineDash([10, 15]);
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, curr.y);
+                ctx.lineTo(this.width, curr.y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.lineWidth = 1;
+                
+                // Text
+                ctx.fillStyle = '#fff';
+                ctx.font = '600 14px Inter';
+                ctx.textAlign = 'center';
+                ctx.fillText("--- " + curr.landmarkLabel + " ---", curr.center, curr.y - 10);
+            }
+            
+            // Draw depth lines (grid effect on walls)
+            if (!curr.landmark) {
+                ctx.strokeStyle = '#222';
+                ctx.beginPath();
+                ctx.moveTo(cLeft, curr.y);
+                ctx.lineTo(cRight, curr.y);
+                ctx.stroke();
+            }
+        }
+    }
+    
+    // Check collision for a circle at x,y with radius r
+    checkCollision(x, y, r) {
+        // Find segment corresponding to y
+        const playerY = y;
+        
+        for (let seg of this.segments) {
+            if (playerY >= seg.y && playerY <= seg.y + CONFIG.SEGMENT_HEIGHT) {
+                const leftWall = seg.center - seg.width/2;
+                const rightWall = seg.center + seg.width/2;
+                
+                // Wall Collision
+                if (x - r < leftWall || x + r > rightWall) return true;
+                
+                // Obstacle Collision
+                if (seg.obstacle === 1) { // Center block
+                    const obsW = seg.width * 0.4;
+                    const obsLeft = seg.center - obsW/2;
+                    const obsRight = seg.center + obsW/2;
+                    if (x + r > obsLeft && x - r < obsRight) return true;
+                } else if (seg.obstacle === 2) { // Side blocks
+                    const obsW = seg.width * 0.25;
+                    // Left internal block
+                    if (x - r < leftWall + obsW) return true;
+                    // Right internal block
+                    if (x + r > rightWall - obsW) return true;
+                }
+            }
+        }
+        return false;
+    }
+}
+
+class Game {
+    constructor() {
+        this.canvas = document.getElementById('gameCanvas');
+        this.ctx = this.canvas.getContext('2d', { alpha: false });
+        this.scoreDisplay = document.getElementById('scoreDisplay');
+        this.finalScoreDisplay = document.getElementById('finalScore');
+        
+        // Initialize Audio Engine
+        this.sound = new SoundManager();
+
+        this.resize();
+        window.addEventListener('resize', () => this.resize());
+
+        this.input = { left: false, right: false };
+        this.bindEvents();
+        
+        this.state = 'MENU'; // MENU, PLAYING, GAMEOVER
+        this.lastTime = 0;
+        
+        // Game entities
+        this.player = {
+            pos: new Vector2(this.width / 2, this.height * 0.2),
+            vel: new Vector2(0, 0),
+            trail: []
+        };
+        
+        this.particles = [];
+    }
+
+    resize() {
+        this.width = window.innerWidth;
+        this.height = window.innerHeight;
+        this.canvas.width = this.width;
+        this.canvas.height = this.height;
+        if(this.player) this.player.pos.x = this.width/2;
+    }
+
+    bindEvents() {
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') this.input.left = true;
+            if (e.key === 'ArrowRight') this.input.right = true;
+            if (e.code === 'Space') {
+                if (this.state === 'MENU') this.start();
+                else if (this.state === 'GAMEOVER') this.reset();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft') this.input.left = false;
+            if (e.key === 'ArrowRight') this.input.right = false;
+        });
+
+        // Touch controls
+        window.addEventListener('touchstart', (e) => {
+            if(this.state === 'MENU') {
+                 this.start();
+                 return;
+            }
+            if(this.state === 'GAMEOVER') {
+                this.reset();
+                return;
+            }
+            
+            const touchX = e.touches[0].clientX;
+            if (touchX < this.width / 2) this.input.left = true;
+            else this.input.right = true;
+        });
+
+        window.addEventListener('touchend', () => {
+            this.input.left = false;
+            this.input.right = false;
+        });
+    }
+
+    start() {
+        document.getElementById('startScreen').style.display = 'none';
+        
+        // Initialize Audio Context on user interaction
+        this.sound.init();
+        
+        this.reset();
+        this.loop(0);
+    }
+
+    reset() {
+        this.tunnel = new TunnelSystem(this.width, this.height);
+        this.player.pos = new Vector2(this.width / 2, this.height * 0.2);
+        this.player.vel = new Vector2(0, 0);
+        this.player.trail = [];
+        this.particles = [];
+        this.score = 0;
+        this.speed = CONFIG.BASE_SPEED;
+        this.state = 'PLAYING';
+        this.input = { left: false, right: false }; // Reset inputs to prevent stuck keys
+        
+        this.sound.startMusic();
+        
+        document.getElementById('gameOverScreen').style.display = 'none';
+    }
+
+    update(dt) {
+        if (this.state !== 'PLAYING') return;
+
+        // Gradual speed increase with Cap
+        if (this.speed < CONFIG.MAX_SPEED) {
+            this.speed += CONFIG.SPEED_INC;
+        }
+
+        // Update Audio Wind Effect
+        // Normalize speed between 0 and 1 relative to start/max
+        const speedRatio = (this.speed - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED);
+        this.sound.updateWind(Math.max(0, Math.min(1, speedRatio)));
+
+        // Score increases by distance traveled
+        this.score += (this.speed * 0.1);
+        this.scoreDisplay.textContent = Math.floor(this.score);
+
+        // Player Physics
+        if (this.input.left) this.player.vel.x -= CONFIG.ACCEL;
+        if (this.input.right) this.player.vel.x += CONFIG.ACCEL;
+
+        this.player.vel.x *= CONFIG.FRICTION;
+        this.player.pos.x += this.player.vel.x;
+
+        // Trail Logic
+        if (Math.random() > 0.5) {
+            this.player.trail.push({
+                x: this.player.pos.x, 
+                y: this.player.pos.y, 
+                alpha: 0.8,
+                width: CONFIG.PLAYER_SIZE * 2
+            });
+        }
+        
+        // Update Trail
+        for (let i = this.player.trail.length - 1; i >= 0; i--) {
+            const t = this.player.trail[i];
+            t.y -= this.speed; // Trail moves up with world
+            t.alpha -= 0.05;
+            t.width *= 0.9;
+            if (t.alpha <= 0) this.player.trail.splice(i, 1);
+        }
+
+        // Speed lines/Particles
+        if (Math.random() < 0.3) {
+            this.particles.push(new Particle(
+                Math.random() * this.width,
+                this.height + 10,
+                this.speed * 1.5,
+                'rgba(255,255,255,0.1)'
+            ));
+        }
+        
+        // Update particles
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            this.particles[i].update();
+            if (this.particles[i].life <= 0) this.particles.splice(i, 1);
+        }
+
+        // Update Tunnel
+        this.tunnel.update(this.speed, this.score);
+        this.tunnel.checkLandmarks(this.player.pos.y, this.sound);
+
+        // Collision Detection
+        if (this.tunnel.checkCollision(this.player.pos.x, this.player.pos.y, CONFIG.PLAYER_SIZE)) {
+            this.gameOver();
+        }
+    }
+
+    draw() {
+        // Clear background
+        this.ctx.fillStyle = CONFIG.PATH_COLOR;
+        this.ctx.fillRect(0, 0, this.width, this.height);
+
+        // Draw Tunnel
+        if (this.tunnel) this.tunnel.draw(this.ctx);
+
+        // Draw Particles
+        this.particles.forEach(p => p.draw(this.ctx));
+
+        // Draw Player Trail
+        this.ctx.fillStyle = CONFIG.ACCENT_COLOR;
+        this.player.trail.forEach(t => {
+            this.ctx.globalAlpha = t.alpha * 0.5;
+            this.ctx.beginPath();
+            this.ctx.arc(t.x, t.y, t.width/2, 0, Math.PI*2);
+            this.ctx.fill();
+        });
+        this.ctx.globalAlpha = 1;
+
+        // Draw Player
+        if (this.state === 'PLAYING') {
+            this.ctx.shadowBlur = 15;
+            this.ctx.shadowColor = CONFIG.ACCENT_COLOR;
+            this.ctx.fillStyle = CONFIG.ACCENT_COLOR;
+            this.ctx.beginPath();
+            this.ctx.arc(this.player.pos.x, this.player.pos.y, CONFIG.PLAYER_SIZE, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.shadowBlur = 0;
+        }
+    }
+
+    gameOver() {
+        this.state = 'GAMEOVER';
+        this.sound.stopMusic();
+        this.sound.playCrash();
+        
+        this.finalScoreDisplay.textContent = Math.floor(this.score);
+        document.getElementById('gameOverScreen').style.display = 'flex';
+        
+        // Death effect (shake)
+        this.canvas.style.transform = `translate(${Math.random()*10-5}px, ${Math.random()*10-5}px)`;
+        setTimeout(() => this.canvas.style.transform = 'none', 50);
+    }
+
+    loop(timestamp) {
+        if (!this.lastTime) this.lastTime = timestamp;
+        const dt = timestamp - this.lastTime;
+        this.lastTime = timestamp;
+
+        this.update(dt);
+        this.draw();
+
+        requestAnimationFrame(this.loop.bind(this));
+    }
+}
+
+// Initialize
+const game = new Game();
+
+</script>
+</body>
+</html>
