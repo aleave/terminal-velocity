@@ -498,12 +498,17 @@ class TunnelSystem {
         this.height = height;
         this.segments = [];
         this.pathCenter = width / 2;
-        this.pathWidth = 450; 
+        
+        // RESPONSIVE UPDATE: Calculate max path width relative to screen size
+        // Max width 450px, but never more than 65% of screen width (e.g. for mobiles)
+        this.maxPathWidth = Math.min(450, width * 0.65);
+        this.pathWidth = this.maxPathWidth; 
+        
         this.targetCenter = width / 2;
-        this.noiseOffset = Math.random() * 1000; // Randomize start to prevent predictable rightward bias
+        this.noiseOffset = Math.random() * 1000; 
         this.segmentCount = 0;
         this.lastObstacleDist = 0;
-        this.nextLandmark = 500; // First landmark at 500m
+        this.nextLandmark = 500; 
         this.accumulatedDepth = 0;
         
         // Initialize segments to fill screen
@@ -515,20 +520,21 @@ class TunnelSystem {
     addSegment(yPosition) {
         this.segmentCount++;
         this.lastObstacleDist++;
-        this.accumulatedDepth += (CONFIG.SEGMENT_HEIGHT * 0.1); // Rough estimate for landmarks
+        this.accumulatedDepth += (CONFIG.SEGMENT_HEIGHT * 0.1); 
         
         // Calculate Difficulty Factor (0.0 to 1.0)
-        // Reaches max difficulty at 3000 segments (approx 2 mins of survival)
         const difficulty = Math.min(1, this.segmentCount / 3000);
 
-        // Dynamic Path Width: Narrows from 450 to 200
-        this.pathWidth = 450 - (difficulty * 250);
+        // Dynamic Path Width: Narrows relative to max width
+        // Scales from 100% of max width down to ~55% of max width at peak difficulty
+        this.pathWidth = this.maxPathWidth - (difficulty * (this.maxPathWidth * 0.45));
 
         // Simple noise logic for winding path
         this.noiseOffset += 0.05;
         
         // Drifting center
         if (Math.random() < 0.05) {
+            // Keep center somewhat within safe bounds (20% to 80% of screen)
             this.targetCenter = (this.width * 0.2) + Math.random() * (this.width * 0.6);
         }
         
@@ -538,14 +544,10 @@ class TunnelSystem {
         // Add minimal sine wave for organic feel
         const organicDrift = Math.sin(this.noiseOffset) * 20;
         
-        // Landmark Logic (Approx every 500 depth units)
-        // We use segmentCount to keep it consistent
-        // Let's say 1 segment ~= 1 meter unit roughly in gameplay perception
-        // Or strictly use segment count. Every ~350 segments is roughly 500m on the scorecard
+        // Landmark Logic 
         let isLandmark = false;
         let landmarkLabel = "";
         
-        // Every 350 segments, insert a landmark (tuning to match score speed roughly)
         if (this.segmentCount % 350 === 0) {
             isLandmark = true;
             landmarkLabel = (this.segmentCount / 350 * 500) + "m";
@@ -553,12 +555,9 @@ class TunnelSystem {
         
         // Dynamic Obstacles Logic
         let hasObstacle = false;
-        let obstacleType = 0; // 0: None, 1: Center Block, 2: Split
+        let obstacleType = 0; 
         
-        // Dynamic Safety Gap: Reduces from 25 to 10
         const minGap = 25 - (difficulty * 15);
-        
-        // Dynamic Spawn Chance: Increases from 5% to 18%
         const spawnChance = 0.05 + (difficulty * 0.13);
 
         if (this.segmentCount > 100 && this.lastObstacleDist > minGap && !isLandmark) {
@@ -583,7 +582,6 @@ class TunnelSystem {
         this.segments.push(segment);
     }
 
-    // UPDATED: Now accepts total movement amount (speed * timeScale) instead of raw speed
     update(moveAmount) {
         // Move all segments UP
         this.segments.forEach(seg => {
@@ -597,16 +595,14 @@ class TunnelSystem {
 
         // Add new segments at bottom
         const lastSeg = this.segments[this.segments.length - 1];
-        if (lastSeg.y < this.height + 100) { // Buffer
+        if (lastSeg.y < this.height + 100) { 
             this.addSegment(lastSeg.y + CONFIG.SEGMENT_HEIGHT);
         }
     }
 
     checkLandmarks(playerY, soundManager) {
-        // Check if any landmark segment has just passed the player
         this.segments.forEach(seg => {
             if (seg.landmark && !seg.landmarkPlayed) {
-                // If segment is within a small range of playerY (crossing it)
                 if (Math.abs(seg.y - playerY) < CONFIG.SEGMENT_HEIGHT) {
                     soundManager.playPlop();
                     seg.landmarkPlayed = true;
@@ -618,26 +614,21 @@ class TunnelSystem {
     draw(ctx) {
         ctx.lineWidth = 1;
         
-        // Draw the walls (The inverse of the path)
         for (let i = 0; i < this.segments.length - 1; i++) {
             const curr = this.segments[i];
             const next = this.segments[i+1];
 
-            // Calculate wall boundaries
             const cLeft = curr.center - curr.width/2;
             const cRight = curr.center + curr.width/2;
             const nLeft = next.center - next.width/2;
             const nRight = next.center + next.width/2;
 
-            // Gradient for depth perception
-            const gradient = ctx.createLinearGradient(0, curr.y, 0, next.y);
-            const darkness = Math.min(1, i / (CONFIG.VIEW_DISTANCE * 0.8)); // Fade out at bottom
             const colorVal = Math.floor(20 + curr.colorOffset);
             const col = `rgb(${colorVal}, ${colorVal}, ${colorVal + 10})`;
             
             ctx.fillStyle = col;
             
-            // Left Wall
+            // Left Wall (Fill from 0 to left edge of tunnel)
             ctx.beginPath();
             ctx.moveTo(0, curr.y);
             ctx.lineTo(cLeft, curr.y);
@@ -645,7 +636,7 @@ class TunnelSystem {
             ctx.lineTo(0, next.y);
             ctx.fill();
 
-            // Right Wall
+            // Right Wall (Fill from right edge of tunnel to screen width)
             ctx.beginPath();
             ctx.moveTo(this.width, curr.y);
             ctx.lineTo(cRight, curr.y);
@@ -653,18 +644,15 @@ class TunnelSystem {
             ctx.lineTo(this.width, next.y);
             ctx.fill();
 
-            // Draw Obstacles
             if (curr.obstacle > 0) {
-                ctx.fillStyle = '#ff3333'; // Hazard color
+                ctx.fillStyle = '#ff3333'; 
                 ctx.shadowBlur = 10;
                 ctx.shadowColor = '#ff0000';
                 
                 if (curr.obstacle === 1) {
-                    // Center Block
                     const obsW = curr.width * 0.4;
                     ctx.fillRect(curr.center - obsW/2, curr.y, obsW, CONFIG.SEGMENT_HEIGHT);
                 } else if (curr.obstacle === 2) {
-                    // Split (Side blocks)
                     const obsW = curr.width * 0.25;
                     ctx.fillRect(cLeft, curr.y, obsW, CONFIG.SEGMENT_HEIGHT);
                     ctx.fillRect(cRight - obsW, curr.y, obsW, CONFIG.SEGMENT_HEIGHT);
@@ -672,7 +660,6 @@ class TunnelSystem {
                 ctx.shadowBlur = 0;
             }
             
-            // Draw Landmark Line
             if (curr.landmark) {
                 ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
                 ctx.setLineDash([10, 15]);
@@ -684,14 +671,12 @@ class TunnelSystem {
                 ctx.setLineDash([]);
                 ctx.lineWidth = 1;
                 
-                // Text
                 ctx.fillStyle = '#fff';
                 ctx.font = '600 14px Inter';
                 ctx.textAlign = 'center';
                 ctx.fillText("--- " + curr.landmarkLabel + " ---", curr.center, curr.y - 10);
             }
             
-            // Draw depth lines (grid effect on walls)
             if (!curr.landmark) {
                 ctx.strokeStyle = '#222';
                 ctx.beginPath();
@@ -702,9 +687,7 @@ class TunnelSystem {
         }
     }
     
-    // Check collision for a circle at x,y with radius r
     checkCollision(x, y, r) {
-        // Find segment corresponding to y
         const playerY = y;
         
         for (let seg of this.segments) {
@@ -712,20 +695,16 @@ class TunnelSystem {
                 const leftWall = seg.center - seg.width/2;
                 const rightWall = seg.center + seg.width/2;
                 
-                // Wall Collision
                 if (x - r < leftWall || x + r > rightWall) return true;
                 
-                // Obstacle Collision
-                if (seg.obstacle === 1) { // Center block
+                if (seg.obstacle === 1) { 
                     const obsW = seg.width * 0.4;
                     const obsLeft = seg.center - obsW/2;
                     const obsRight = seg.center + obsW/2;
                     if (x + r > obsLeft && x - r < obsRight) return true;
-                } else if (seg.obstacle === 2) { // Side blocks
+                } else if (seg.obstacle === 2) { 
                     const obsW = seg.width * 0.25;
-                    // Left internal block
                     if (x - r < leftWall + obsW) return true;
-                    // Right internal block
                     if (x + r > rightWall - obsW) return true;
                 }
             }
@@ -741,19 +720,19 @@ class Game {
         this.scoreDisplay = document.getElementById('scoreDisplay');
         this.finalScoreDisplay = document.getElementById('finalScore');
         
-        // Initialize Audio Engine
         this.sound = new SoundManager();
-
+        
+        this.lateralScale = 1.0; // Scale factor for player movement based on screen width
+        
         this.resize();
         window.addEventListener('resize', () => this.resize());
 
         this.input = { left: false, right: false };
         this.bindEvents();
         
-        this.state = 'MENU'; // MENU, PLAYING, GAMEOVER
+        this.state = 'MENU'; 
         this.lastTime = 0;
         
-        // Game entities
         this.player = {
             pos: new Vector2(this.width / 2, this.height * 0.2),
             vel: new Vector2(0, 0),
@@ -768,7 +747,22 @@ class Game {
         this.height = window.innerHeight;
         this.canvas.width = this.width;
         this.canvas.height = this.height;
+        
+        // RESPONSIVE PHYSICS SCALE
+        // Normalize lateral movement: On a 400px screen (mobile), player should move slower laterally 
+        // to maintain similar control feel as on a 1000px screen (desktop).
+        // We use 800px as a "standard" reference width.
+        this.lateralScale = Math.min(1, this.width / 800);
+        
         if(this.player) this.player.pos.x = this.width/2;
+        
+        // Update tunnel dimensions if it exists
+        if(this.tunnel) {
+            this.tunnel.width = this.width;
+            this.tunnel.height = this.height;
+            // Recalculate max width to fix visibility immediately on rotation
+            this.tunnel.maxPathWidth = Math.min(450, this.width * 0.65);
+        }
     }
 
     bindEvents() {
@@ -786,7 +780,6 @@ class Game {
             if (e.key === 'ArrowRight') this.input.right = false;
         });
 
-        // Touch controls
         window.addEventListener('touchstart', (e) => {
             if(this.state === 'MENU') {
                  this.start();
@@ -810,10 +803,7 @@ class Game {
 
     start() {
         document.getElementById('startScreen').style.display = 'none';
-        
-        // Initialize Audio Context on user interaction
         this.sound.init();
-        
         this.reset();
         this.loop(0);
     }
@@ -827,51 +817,40 @@ class Game {
         this.score = 0;
         this.speed = CONFIG.BASE_SPEED;
         this.state = 'PLAYING';
-        this.input = { left: false, right: false }; // Reset inputs to prevent stuck keys
+        this.input = { left: false, right: false }; 
         
         this.sound.startMusic();
         
         document.getElementById('gameOverScreen').style.display = 'none';
     }
 
-    // UPDATED: Now receives delta time (dt) for framerate independence
     update(dt) {
         if (this.state !== 'PLAYING') return;
 
-        // --- Delta Time Normalization ---
-        // Target 60 FPS (16.67ms per frame). 
-        // If dt is 16.67, timeScale is 1.0. If dt is 8.33 (120hz), timeScale is 0.5.
-        // We cap dt at 100ms to prevent explosion on tab switching.
         const safeDt = Math.min(dt, 100);
         const timeScale = safeDt / (1000 / 60);
 
-        // Gradual speed increase with Cap (scaled by time)
         if (this.speed < CONFIG.MAX_SPEED) {
             this.speed += CONFIG.SPEED_INC * timeScale;
         }
 
-        // Update Audio Wind Effect
         const speedRatio = (this.speed - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED);
         this.sound.updateWind(Math.max(0, Math.min(1, speedRatio)));
 
-        // Score increases by distance traveled (scaled)
         this.score += (this.speed * 0.1) * timeScale;
         this.scoreDisplay.textContent = Math.floor(this.score);
 
-        // Player Physics (Scaled)
-        // Acceleration scaling
-        if (this.input.left) this.player.vel.x -= CONFIG.ACCEL * timeScale;
-        if (this.input.right) this.player.vel.x += CONFIG.ACCEL * timeScale;
-
-        // Friction scaling: exponential decay requires power function
-        // v_new = v_old * FRICTION^timeScale
-        this.player.vel.x *= Math.pow(CONFIG.FRICTION, timeScale);
+        // Player Physics (Responsive Scaling)
+        // We scale the acceleration by lateralScale so controls feel consistent on small screens
+        const effectiveAccel = CONFIG.ACCEL * this.lateralScale;
         
-        // Position integration
+        if (this.input.left) this.player.vel.x -= effectiveAccel * timeScale;
+        if (this.input.right) this.player.vel.x += effectiveAccel * timeScale;
+
+        this.player.vel.x *= Math.pow(CONFIG.FRICTION, timeScale);
         this.player.pos.x += this.player.vel.x * timeScale;
 
-        // Trail Logic
-        if (Math.random() < 0.5 * timeScale) { // adjust probability by timeScale
+        if (Math.random() < 0.5 * timeScale) { 
             this.player.trail.push({
                 x: this.player.pos.x, 
                 y: this.player.pos.y, 
@@ -880,16 +859,14 @@ class Game {
             });
         }
         
-        // Update Trail
         for (let i = this.player.trail.length - 1; i >= 0; i--) {
             const t = this.player.trail[i];
-            t.y -= this.speed * timeScale; // Trail moves up with world (scaled)
+            t.y -= this.speed * timeScale; 
             t.alpha -= 0.05 * timeScale;
-            t.width *= Math.pow(0.9, timeScale); // Decay width
+            t.width *= Math.pow(0.9, timeScale); 
             if (t.alpha <= 0) this.player.trail.splice(i, 1);
         }
 
-        // Speed lines/Particles
         if (Math.random() < 0.3 * timeScale) {
             this.particles.push(new Particle(
                 Math.random() * this.width,
@@ -899,34 +876,27 @@ class Game {
             ));
         }
         
-        // Update particles
         for (let i = this.particles.length - 1; i >= 0; i--) {
             this.particles[i].update(timeScale);
             if (this.particles[i].life <= 0) this.particles.splice(i, 1);
         }
 
-        // Update Tunnel (Pass movement amount, not raw speed)
         this.tunnel.update(this.speed * timeScale);
         this.tunnel.checkLandmarks(this.player.pos.y, this.sound);
 
-        // Collision Detection
         if (this.tunnel.checkCollision(this.player.pos.x, this.player.pos.y, CONFIG.PLAYER_SIZE)) {
             this.gameOver();
         }
     }
 
     draw() {
-        // Clear background
         this.ctx.fillStyle = CONFIG.PATH_COLOR;
         this.ctx.fillRect(0, 0, this.width, this.height);
 
-        // Draw Tunnel
         if (this.tunnel) this.tunnel.draw(this.ctx);
 
-        // Draw Particles
         this.particles.forEach(p => p.draw(this.ctx));
 
-        // Draw Player Trail
         this.ctx.fillStyle = CONFIG.ACCENT_COLOR;
         this.player.trail.forEach(t => {
             this.ctx.globalAlpha = t.alpha * 0.5;
@@ -936,7 +906,6 @@ class Game {
         });
         this.ctx.globalAlpha = 1;
 
-        // Draw Player
         if (this.state === 'PLAYING') {
             this.ctx.shadowBlur = 15;
             this.ctx.shadowColor = CONFIG.ACCENT_COLOR;
@@ -956,7 +925,6 @@ class Game {
         this.finalScoreDisplay.textContent = Math.floor(this.score);
         document.getElementById('gameOverScreen').style.display = 'flex';
         
-        // Death effect (shake)
         this.canvas.style.transform = `translate(${Math.random()*10-5}px, ${Math.random()*10-5}px)`;
         setTimeout(() => this.canvas.style.transform = 'none', 50);
     }
@@ -973,7 +941,6 @@ class Game {
     }
 }
 
-// Initialize
 const game = new Game();
 
 </script>
